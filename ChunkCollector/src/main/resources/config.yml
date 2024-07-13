@@ -1,0 +1,71 @@
+gui:
+  book-enabled: true
+  pickup-slot: 26
+  sellall-slot: 24
+  book-slot: 25
+
+collectable-items:
+  - GOLD_INGOT
+  - DIAMOND
+  - ROTTEN_FLESH
+
+hologram:
+  y-offset: 1.5
+  lines:
+    - "&b{owner}'s Collector"
+    - "&6&nRight click to open"
+    - "&aItems: &e{items}"
+    - "&aTotal Sold: &e{total_sold}"
+
+buttons:
+  pickup:
+    name: "&cPick Up"
+    lore:
+      - "&7Click to pick up the Chunk Collector"
+  sellall:
+    name: "&aSell All"
+    lore:
+      - "&7Click to sell all items"
+      - "&7stored in the Chunk Collector"
+
+sellwand:
+  material: "STICK"
+  common:
+    name: "&fCommon Sell Wand"
+    lore:
+      - "&7Multiplier: &f%multiplier%"
+      - "&7Uses: &f%uses%"
+    custom_model_data: 1001
+  rare:
+    name: "&bRare Sell Wand"
+    lore:
+      - "&bMultiplier: &f%multiplier%"
+      - "&bUses: &f%uses%"
+    custom_model_data: 1002
+  legendary:
+    name: "&6Legendary Sell Wand"
+    lore:
+      - "&6Multiplier: &f%multiplier%"
+      - "&6Uses: &f%uses%"
+    custom_model_data: 1003
+
+messages:
+  no_permission: "&cYou do not have permission to use this command."
+  invalid_number_format: "&cInvalid number format. Please enter a valid number."
+  invalid_rarity: "&cInvalid rarity. Valid rarities are: common, rare, legendary."
+  player_not_found: "&cPlayer not found."
+  sellwand_given: "&aYou have given %player% a Sell Wand."
+
+collector:
+  gui-size: 27
+  gui:
+    name: "&6Chunk Collector"
+  item:
+    name: "&6Chunk Collector"
+    lore:
+      - "&7Place this beacon to collect items"
+      - "&7store.pvpcloud."
+  book:
+    name: "&aLatest 5 Sellers"
+    item-lore:
+      - "{player} - ${price} ({date})"
