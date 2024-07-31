@@ -1,7 +1,8 @@
 package bgprotobg.net.chunkcollector;
 
+import com.artillexstudios.axboosters.api.AxBoostersAPI;
+import com.artillexstudios.axboosters.boosters.BoosterManager;
 import com.artillexstudios.axboosters.hooks.HookManager;
-import com.artillexstudios.axboosters.utils.BoosterUtils;
 import com.bgsoftware.superiorskyblock.api.SuperiorSkyblockAPI;
 import com.bgsoftware.superiorskyblock.api.island.Island;
 import com.bgsoftware.superiorskyblock.api.wrappers.SuperiorPlayer;
@@ -10,10 +11,7 @@ import eu.decentsoftware.holograms.api.DHAPI;
 import net.brcdev.shopgui.event.ShopPreTransactionEvent;
 import net.brcdev.shopgui.shop.ShopManager;
 import net.brcdev.shopgui.shop.item.ShopItem;
-import net.cloud.spawners.items.ItemManager;
-import net.cloud.spawners.items.objects.StackedItem;
-import org.bukkit.entity.LivingEntity;
-import org.bukkit.event.EventPriority;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.*;
 import org.bukkit.block.Block;
@@ -45,8 +43,10 @@ import net.brcdev.shopgui.ShopGuiPlusApi;
 
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.stream.Collectors;
 
 
 public class ChunkCollector extends JavaPlugin implements Listener {
@@ -54,7 +54,6 @@ public class ChunkCollector extends JavaPlugin implements Listener {
     private final NamespacedKey chunkCollectorKey = new NamespacedKey(this, "chunk_collector");
     private final NamespacedKey ownerKey = new NamespacedKey(this, "owner_uuid");
     public final HashMap<Block, Inventory> collectorInventories = new HashMap<>();
-    private final HashMap<Block, Map<Material, Integer>> itemStorage = new HashMap<>();
     protected final HashMap<Block, UUID> beaconOwners = new HashMap<>();
     private final HashMap<Block, Hologram> beaconHolograms = new HashMap<>();
     private List<Material> collectableItems;
@@ -63,7 +62,12 @@ public class ChunkCollector extends JavaPlugin implements Listener {
     private final HashMap<Block, Double> totalSoldAmounts = new HashMap<>();
     private final HashMap<Block, List<SellerInfo>> latestSellers = new HashMap<>();
     private boolean isSuperiorSkyblockLoaded;
-
+    private boolean isResidenceLoaded;
+    private final Map<Block, Player> collectorOpeners = new HashMap<>();
+    // Assuming itemStorage is defined somewhere as follows
+    private Map<Block, List<ItemStack>> itemStorage = new HashMap<>();
+    private Map<String, CustomItem> customItems = new HashMap<>();
+    private boolean isShopGUIPlusLoaded;
 
     private int sellAllSlot;
     private int pickUpSlot;
@@ -77,16 +81,14 @@ public class ChunkCollector extends JavaPlugin implements Listener {
     private String chunkCollectorItemName;
     private List<String> chunkCollectorItemLore;
     private String bookItemName;
-    private List<String> bookItemLore;
-    private ItemManager itemManager;
-    public ChunkCollector() {
-        isSuperiorSkyblockLoaded = Bukkit.getPluginManager().isPluginEnabled("SuperiorSkyblock2");
-    }
+    private List<String> bookItemLore; private boolean isAxBoostersLoaded;
+
 
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
+        loadCustomItems();
 
         sqLite = new SQLite(getDataFolder() + "/data.db");
         sqLite.createTables();
@@ -94,24 +96,33 @@ public class ChunkCollector extends JavaPlugin implements Listener {
         this.getCommand("sellwand").setExecutor(sellWand);
         Bukkit.getPluginManager().registerEvents(sellWand, this);
 
+        isSuperiorSkyblockLoaded = getServer().getPluginManager().isPluginEnabled("SuperiorSkyblock2");
+        isShopGUIPlusLoaded = getServer().getPluginManager().isPluginEnabled("ShopGUIPlus");
+        Bukkit.getLogger().info("SuperiorSkyblock2 is loaded and enabled: " + isSuperiorSkyblockLoaded);
+        Bukkit.getLogger().info("ShopGUIPlus is loaded and enabled: " + isShopGUIPlusLoaded);
 
         if (!Bukkit.getPluginManager().isPluginEnabled("DecentHolograms")) {
             getLogger().severe("Disabled due to no DecentHolograms dependency found!");
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
+
+        isAxBoostersLoaded = getServer().getPluginManager().isPluginEnabled("AxBoosters");
+        Bukkit.getLogger().info("AxBoosters is loaded and enabled: " + isAxBoostersLoaded);
+
+
         getServer().getPluginManager().registerEvents(this, this);
+
         if (!setupEconomy()) {
             getLogger().severe("Disabled due to no Vault dependency found!");
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
+
         if (Bukkit.getPluginManager().getPlugin("PlaceholderAPI") != null) {
             new CollectorExpansion(this).register();
         }
-        final AxBoostersMoneyExample booster = new AxBoostersMoneyExample();
-        HookManager.registerBoosterHook(this, booster);
-        getServer().getPluginManager().registerEvents(booster, this);
+
         getCommand("chunkcollector").setExecutor(this);
         getCommand("chunkcollector").setTabCompleter((sender, command, alias, args) -> {
             if (args.length == 1) {
@@ -132,7 +143,6 @@ public class ChunkCollector extends JavaPlugin implements Listener {
         loadHologramConfig();
         loadCollectorConfig();
         loadCollectorsFromDatabase();
-
     }
 
     private void loadHologramConfig() {
@@ -158,13 +168,15 @@ public class ChunkCollector extends JavaPlugin implements Listener {
 
             if (hologram != null) {
                 Location hologramLocation = hologram.getLocation();
-                Map<Material, Integer> storedItems = itemStorage.get(block);
+                List<ItemStack> storedItems = itemStorage.get(block);
                 List<SellerInfo> sellers = latestSellers.getOrDefault(block, new ArrayList<>());
 
                 sqLite.saveCollector(block, ownerUUID, hologramLocation, storedItems, sold, sellers);
             }
         }
     }
+
+
     private void loadCollectorConfig() {
         collectorGuiName = ChatColor.translateAlternateColorCodes('&', getConfig().getString("collector.gui.name", "Chunk Collector"));
         chunkCollectorItemName = ChatColor.translateAlternateColorCodes('&', getConfig().getString("collector.item.name", "&6Chunk Collector"));
@@ -177,7 +189,7 @@ public class ChunkCollector extends JavaPlugin implements Listener {
         bookItemName = ChatColor.translateAlternateColorCodes('&', getConfig().getString("collector.book.name", "&aLatest 5 Sellers"));
 
         bookItemLore = new ArrayList<>();
-        for (String line : getConfig().getStringList("collector.book.item-lore")) {
+        for (String line : getConfig().getStringList("collector.book.item-lore")) {  // Adjust the key here
             bookItemLore.add(ChatColor.translateAlternateColorCodes('&', line));
         }
     }
@@ -205,11 +217,10 @@ public class ChunkCollector extends JavaPlugin implements Listener {
             List<SellerInfo> sellers = data.getSellers();
             latestSellers.put(block, sellers);
 
-            new CollectorTask(block, itemManager).runTaskTimer(this, 0, 20);
+            new CollectorTask(block).runTaskTimer(this, 0, 20);
             occupiedChunks.add(block.getChunk());
         }
     }
-
 
 
 
@@ -240,6 +251,7 @@ public class ChunkCollector extends JavaPlugin implements Listener {
                 }
 
                 reloadConfig();
+                loadCustomItems();
                 loadCollectableItems();
                 loadButtonConfig();
                 loadCollectorConfig();
@@ -291,21 +303,41 @@ public class ChunkCollector extends JavaPlugin implements Listener {
     public void onEntityDeath(EntityDeathEvent event) {
         Location location = event.getEntity().getLocation();
         Chunk chunk = location.getChunk();
+
         for (Block block : collectorInventories.keySet()) {
             if (block.getChunk().equals(chunk)) {
-                Map<Material, Integer> storedItems = itemStorage.get(block);
+                List<ItemStack> storedItems = itemStorage.get(block);
+                if (storedItems == null) {
+                    storedItems = new ArrayList<>();
+                    itemStorage.put(block, storedItems);
+                }
+
                 List<ItemStack> drops = event.getDrops();
                 for (Iterator<ItemStack> iterator = drops.iterator(); iterator.hasNext(); ) {
                     ItemStack itemStack = iterator.next();
                     if (collectableItems.contains(itemStack.getType())) {
-                        Material itemType = itemStack.getType();
-                        int currentAmount = storedItems.getOrDefault(itemType, 0);
-                        storedItems.put(itemType, currentAmount + itemStack.getAmount());
-                        iterator.remove();
+                        // Combine items with the same type, name, and lore
+                        boolean itemExists = false;
+                        for (ItemStack storedItem : storedItems) {
+                            if (storedItem.getType() == itemStack.getType() &&
+                                    storedItem.getItemMeta().hasDisplayName() == itemStack.getItemMeta().hasDisplayName() &&
+                                    storedItem.getItemMeta().getDisplayName().equals(itemStack.getItemMeta().getDisplayName()) &&
+                                    storedItem.getItemMeta().hasLore() == itemStack.getItemMeta().hasLore() &&
+                                    String.join(",", storedItem.getItemMeta().getLore()).equals(String.join(",", itemStack.getItemMeta().getLore()))) {
+                                storedItem.setAmount(storedItem.getAmount() + itemStack.getAmount());
+                                itemExists = true;
+                                break;
+                            }
+                        }
 
-                        itemStack.setAmount(currentAmount + itemStack.getAmount());
+                        if (!itemExists) {
+                            storedItems.add(itemStack.clone());
+                        }
+
+                        iterator.remove();
                     }
                 }
+
                 updateCollectorHologram(block);
             }
         }
@@ -358,10 +390,10 @@ public class ChunkCollector extends JavaPlugin implements Listener {
             storage.setItem(8, pickUpButton);
 
             collectorInventories.put(block, storage);
-            itemStorage.put(block, new HashMap<>());
+            itemStorage.put(block, new ArrayList<>());
             beaconOwners.put(block, player.getUniqueId());
             latestSellers.put(block, new ArrayList<>());
-            new CollectorTask(block, itemManager).runTaskTimer(this, 0, 20);
+            new CollectorTask(block).runTaskTimer(this, 0, 20);
 
             double yOffset = getConfig().getDouble("hologram.y-offset", 2.3);
             String hologramName = UUID.randomUUID().toString();
@@ -374,8 +406,6 @@ public class ChunkCollector extends JavaPlugin implements Listener {
 
 
 
-
-
     private void updateCollectorHologram(Block block) {
         Hologram hologram = beaconHolograms.get(block);
         if (hologram == null) {
@@ -385,7 +415,27 @@ public class ChunkCollector extends JavaPlugin implements Listener {
         }
 
         UUID ownerUUID = beaconOwners.get(block);
-        String ownerName = Bukkit.getOfflinePlayer(ownerUUID).getName();
+        String ownerName = null;
+        if (ownerUUID != null) {
+            OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(ownerUUID);
+            if (offlinePlayer != null) {
+                ownerName = offlinePlayer.getName();
+            }
+        }
+        if (ownerName == null) {
+            ownerName = "Unknown"; // Default value if owner name is null
+        }
+
+        int totalAmount = getTotalAmount(block);
+        String formattedTotalAmount = formatAmount(totalAmount);
+        if (formattedTotalAmount == null) {
+            formattedTotalAmount = "0"; // Default value if formattedTotalAmount is null
+        }
+
+        String totalSoldAmount = getTotalSoldAmount(block);
+        if (totalSoldAmount == null) {
+            totalSoldAmount = "0"; // Default value if totalSoldAmount is null
+        }
 
         List<String> hologramLines = getConfig().getStringList("hologram.lines");
         List<String> formattedLines = new ArrayList<>();
@@ -393,8 +443,8 @@ public class ChunkCollector extends JavaPlugin implements Listener {
         for (String line : hologramLines) {
             formattedLines.add(ChatColor.translateAlternateColorCodes('&', line)
                     .replace("{owner}", ownerName)
-                    .replace("{items}", String.valueOf(getTotalAmount(block)))
-                    .replace("{total_sold}", getTotalSoldAmount(block)));
+                    .replace("{items}", formattedTotalAmount)
+                    .replace("{total_sold}", totalSoldAmount));
         }
 
         double yOffset = getConfig().getDouble("hologram.y-offset", 2.3);
@@ -471,6 +521,14 @@ public class ChunkCollector extends JavaPlugin implements Listener {
                 if (collectorInventories.containsKey(block)) {
                     event.setCancelled(true);
 
+                    if (collectorOpeners.containsKey(block)) {
+                        Player opener = collectorOpeners.get(block);
+                        if (!opener.equals(player) && !player.hasPermission("chunkcollector.open.others")) {
+                            player.sendMessage(ChatColor.RED + "The collector is already opened by another player.");
+                            return;
+                        }
+                    }
+
                     if (isSuperiorSkyblockLoaded) {
                         SuperiorPlayer superiorPlayer = SuperiorSkyblockAPI.getPlayer(player.getUniqueId());
                         if (superiorPlayer != null) {
@@ -480,6 +538,7 @@ public class ChunkCollector extends JavaPlugin implements Listener {
                                     Inventory storage = collectorInventories.get(block);
                                     updateInventory(storage, block);
                                     player.openInventory(storage);
+                                    collectorOpeners.put(block, player);
                                 } else {
                                     player.sendMessage(ChatColor.RED + "You do not have permission to access this Chunk Collector.");
                                 }
@@ -493,11 +552,59 @@ public class ChunkCollector extends JavaPlugin implements Listener {
                         Inventory storage = collectorInventories.get(block);
                         updateInventory(storage, block);
                         player.openInventory(storage);
+                        collectorOpeners.put(block, player);
                     }
                 }
             }
         }
     }
+    private void loadCustomItems() {
+        ConfigurationSection section = getConfig().getConfigurationSection("custom-items");
+        if (section != null) {
+            for (String key : section.getKeys(false)) {
+                String name = ChatColor.translateAlternateColorCodes('&', section.getString(key + ".name"));
+                List<String> lore = section.getStringList(key + ".lore").stream()
+                        .map(line -> ChatColor.translateAlternateColorCodes('&', line))
+                        .collect(Collectors.toList());
+                boolean enchanted = section.getBoolean(key + ".enchanted");
+                double price = section.getDouble(key + ".price");
+
+                customItems.put(key, new CustomItem(name, lore, enchanted, price));
+            }
+        }
+    }
+
+    public class CustomItem {
+        private final String name;
+        private final List<String> lore;
+        private final boolean enchanted;
+        private final double price;
+
+        public CustomItem(String name, List<String> lore, boolean enchanted, double price) {
+            this.name = name;
+            this.lore = lore;
+            this.enchanted = enchanted;
+            this.price = price;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public List<String> getLore() {
+            return lore;
+        }
+
+        public boolean isEnchanted() {
+            return enchanted;
+        }
+
+        public double getPrice() {
+            return price;
+        }
+    }
+
+
 
     protected boolean sellBeaconWithSellwand(Player player, Block block, double sellwandMultiplier, ItemStack sellwand) {
         if (!collectorInventories.containsKey(block)) {
@@ -505,25 +612,21 @@ public class ChunkCollector extends JavaPlugin implements Listener {
             return false;
         }
 
-        Map<Material, Integer> storedItems = itemStorage.get(block);
+        List<ItemStack> storedItems = itemStorage.get(block);
         if (storedItems == null || storedItems.isEmpty()) {
             player.sendMessage(ChatColor.RED + "There are no items to sell.");
             return false;
         }
 
         double totalValue = 0;
-        int totalAmount = 0;
-
-        for (Map.Entry<Material, Integer> entry : storedItems.entrySet()) {
-            Material material = entry.getKey();
-            int amount = entry.getValue();
-            double pricePerItem = getPricePerItem(material);
-            double itemSellPrice = pricePerItem * amount;
+        for (ItemStack stack : storedItems) {
+            double pricePerItem = getPricePerItem(stack.getType(), stack.getItemMeta());
+            double itemSellPrice = pricePerItem * stack.getAmount();
 
             try {
                 ShopPreTransactionEvent shopPreTransactionEvent = (ShopPreTransactionEvent) Class.forName("net.brcdev.shopgui.event.ShopPreTransactionEvent")
                         .getDeclaredConstructor(ShopManager.ShopAction.class, ShopItem.class, Player.class, int.class, double.class)
-                        .newInstance(ShopManager.ShopAction.SELL, ShopGuiPlusApi.getItemStackShopItem(new ItemStack(material)), player, amount, itemSellPrice);
+                        .newInstance(ShopManager.ShopAction.SELL, ShopGuiPlusApi.getItemStackShopItem(new ItemStack(stack.getType())), player, stack.getAmount(), itemSellPrice);
 
                 Bukkit.getPluginManager().callEvent(shopPreTransactionEvent);
                 itemSellPrice = shopPreTransactionEvent.getPrice();
@@ -532,12 +635,11 @@ public class ChunkCollector extends JavaPlugin implements Listener {
             }
 
             totalValue += itemSellPrice;
-            totalAmount += amount;
         }
 
         if (totalValue > 0) {
             AxBoostersMoneyExample booster = new AxBoostersMoneyExample();
-            double boosterMultiplier = BoosterUtils.getMultiplier(player, booster);
+            double boosterMultiplier = BoosterManager.getMultiplier(player, booster);
 
             double finalMultiplier = sellwandMultiplier * boosterMultiplier;
             double finalValue = totalValue * finalMultiplier;
@@ -558,6 +660,10 @@ public class ChunkCollector extends JavaPlugin implements Listener {
 
             updateCollectorHologram(block);
 
+            // Update SellWand earnings
+            double currentEarnings = sellWand.getEarnings(sellwand);
+            sellWand.setEarnings(sellwand, currentEarnings + finalValue);
+
             return true;
         } else {
             player.sendMessage(ChatColor.RED + "There are no items to sell.");
@@ -566,7 +672,9 @@ public class ChunkCollector extends JavaPlugin implements Listener {
     }
 
 
-    @EventHandler
+
+
+        @EventHandler
     public void onInventoryClick(InventoryClickEvent event) {
         Inventory clickedInventory = event.getClickedInventory();
         Inventory topInventory = event.getView().getTopInventory();
@@ -625,7 +733,8 @@ public class ChunkCollector extends JavaPlugin implements Listener {
                 } else if (currentItem.getType() == Material.PAPER && currentItem.getItemMeta().getDisplayName().equals(ChatColor.YELLOW + "Total Amount")) {
                     if (block != null) {
                         int totalAmount = getTotalAmount(block);
-                        player.sendMessage(ChatColor.GREEN + "Total amount of items in storage: " + ChatColor.YELLOW + totalAmount);
+                        String formattedTotalAmount = formatAmount(totalAmount);
+                        player.sendMessage(ChatColor.GREEN + "Total amount of items in storage: " + ChatColor.YELLOW + formattedTotalAmount);
                     }
                 }
             }
@@ -650,32 +759,59 @@ public class ChunkCollector extends JavaPlugin implements Listener {
             return String.format("%.2f", price);
         }
     }
+    protected String formatAmount(int amount) {
+        long longAmount = amount & 0xFFFFFFFFL; // Convert int to unsigned long equivalent
+        if (longAmount >= 1_000_000_000_000_000_000L) {
+            return String.format("%.1fQ", longAmount / 1_000_000_000_000_000_000.0);
+        } else if (longAmount >= 1_000_000_000_000_000L) {
+            return String.format("%.1fq", longAmount / 1_000_000_000_000_000.0);
+        } else if (longAmount >= 1_000_000_000_000L) {
+            return String.format("%.1fT", longAmount / 1_000_000_000_000.0);
+        } else if (longAmount >= 1_000_000_000L) {
+            return String.format("%.1fB", longAmount / 1_000_000_000.0);
+        } else if (longAmount >= 1_000_000L) {
+            return String.format("%.1fM", longAmount / 1_000_000.0);
+        } else if (longAmount >= 100_000L) {
+            return String.format("%.1fK", longAmount / 1_000.0);
+        } else {
+            return String.valueOf(amount);
+        }
+    }
+
+
 
 
 
     public int getTotalAmount(Block block) {
         int totalAmount = 0;
-        Map<Material, Integer> storedItems = itemStorage.get(block);
-        for (int amount : storedItems.values()) {
-            totalAmount += amount;
+        List<ItemStack> storedItems = itemStorage.get(block);
+        if (storedItems != null) {
+            for (ItemStack stack : storedItems) {
+                totalAmount += stack.getAmount();
+            }
         }
         return totalAmount;
     }
 
+
+
     private void sellAllItems(Player player, Block block) {
-        Map<Material, Integer> storedItems = itemStorage.get(block);
+        List<ItemStack> storedItems = itemStorage.get(block);
         double totalValue = 0;
 
-        for (Map.Entry<Material, Integer> entry : storedItems.entrySet()) {
-            Material material = entry.getKey();
-            int amount = entry.getValue();
-            double pricePerItem = getPricePerItem(material);
-            double itemSellPrice = pricePerItem * amount;
+        if (storedItems == null || storedItems.isEmpty()) {
+            player.sendMessage(ChatColor.RED + "There are no items to sell.");
+            return;
+        }
+
+        for (ItemStack stack : storedItems) {
+            double pricePerItem = getPricePerItem(stack.getType(), stack.getItemMeta());
+            double itemSellPrice = pricePerItem * stack.getAmount();
 
             try {
                 ShopPreTransactionEvent shopPreTransactionEvent = (ShopPreTransactionEvent) Class.forName("net.brcdev.shopgui.event.ShopPreTransactionEvent")
                         .getDeclaredConstructor(ShopManager.ShopAction.class, ShopItem.class, Player.class, int.class, double.class)
-                        .newInstance(ShopManager.ShopAction.SELL, ShopGuiPlusApi.getItemStackShopItem(new ItemStack(material)), player, amount, itemSellPrice);
+                        .newInstance(ShopManager.ShopAction.SELL, ShopGuiPlusApi.getItemStackShopItem(new ItemStack(stack.getType())), player, stack.getAmount(), itemSellPrice);
 
                 Bukkit.getPluginManager().callEvent(shopPreTransactionEvent);
                 itemSellPrice = shopPreTransactionEvent.getPrice();
@@ -706,9 +842,10 @@ public class ChunkCollector extends JavaPlugin implements Listener {
             Inventory storage = collectorInventories.get(block);
             updateInventory(storage, block);
         } else {
-            player.sendMessage(ChatColor.RED + "There are no items to sell");
+            player.sendMessage(ChatColor.RED + "There are no items to sell.");
         }
     }
+
 
 
 
@@ -723,12 +860,21 @@ public class ChunkCollector extends JavaPlugin implements Listener {
     @EventHandler
     public void onInventoryClose(InventoryCloseEvent event) {
         Inventory closedInventory = event.getInventory();
-        for (Block block : collectorInventories.keySet()) {
-            if (collectorInventories.get(block).equals(closedInventory)) {
+        Player player = (Player) event.getPlayer();
+        Block blockToRemove = null;
+
+        for (Map.Entry<Block, Inventory> entry : collectorInventories.entrySet()) {
+            if (entry.getValue().equals(closedInventory)) {
+                blockToRemove = entry.getKey();
                 break;
             }
         }
+
+        if (blockToRemove != null) {
+            collectorOpeners.remove(blockToRemove, player);
+        }
     }
+
 
     private Block getBlockFromInventory(Inventory inventory) {
         for (Map.Entry<Block, Inventory> entry : collectorInventories.entrySet()) {
@@ -739,33 +885,46 @@ public class ChunkCollector extends JavaPlugin implements Listener {
         return null;
     }
 
-    private double getPricePerItem(Material material) {
+    private double getPricePerItem(Material material, ItemMeta meta) {
+        for (CustomItem customItem : customItems.values()) {
+            if (customItem.getName().equals(meta.getDisplayName()) && customItem.getLore().equals(meta.getLore())) {
+                return customItem.getPrice();
+            }
+        }
         ItemStack itemStack = new ItemStack(material);
         return ShopGuiPlusApi.getItemStackPriceSell(itemStack);
     }
 
     private void updateInventory(Inventory storage, Block block) {
         storage.clear();
-        Map<Material, Integer> storedItems = itemStorage.get(block);
+        List<ItemStack> storedItems = itemStorage.get(block);
         double totalValue = 0;
 
+        String amountText = getConfig().getString("gui.amount-text", "&aAmount:");
+        String amountTextWithColor = ChatColor.translateAlternateColorCodes('&', amountText);
+
         int slot = 0;
-        for (Map.Entry<Material, Integer> entry : storedItems.entrySet()) {
-            ItemStack stack = new ItemStack(entry.getKey());
-            ItemMeta meta = stack.getItemMeta();
+        for (ItemStack stack : storedItems) {
+            ItemStack displayStack = stack.clone();
+            ItemMeta meta = displayStack.getItemMeta();
 
             if (meta != null) {
                 List<String> lore = meta.hasLore() ? meta.getLore() : new ArrayList<>();
-                lore.add(ChatColor.GREEN + "Amount: " + ChatColor.YELLOW + entry.getValue());
+                String formattedAmount = formatAmount(stack.getAmount());
+                String itemName = meta.hasDisplayName() ? meta.getDisplayName() : displayStack.getType().name();
+
+                meta.setDisplayName(itemName);
+                lore.add("");
+                lore.add(amountTextWithColor + " " + ChatColor.YELLOW + formattedAmount);
+
                 meta.setLore(lore);
-                stack.setItemMeta(meta);
+                displayStack.setItemMeta(meta);
             }
 
-            stack.setAmount(entry.getValue());
-            storage.setItem(slot++, stack);
+            storage.setItem(slot++, displayStack);
 
-            double pricePerItem = getPricePerItem(entry.getKey());
-            totalValue += pricePerItem * entry.getValue();
+            double pricePerItem = getPricePerItem(displayStack.getType(), meta);
+            totalValue += pricePerItem * displayStack.getAmount();
         }
 
         int pickUpSlot = getConfig().getInt("gui.pickup-slot", 26);
@@ -813,7 +972,6 @@ public class ChunkCollector extends JavaPlugin implements Listener {
     }
 
 
-
     private List<String> formatBookLore(List<SellerInfo> sellers) {
         List<String> formattedLore = new ArrayList<>();
         List<String> baseLore = getConfig().getStringList("collector.book.item-lore");
@@ -833,17 +991,11 @@ public class ChunkCollector extends JavaPlugin implements Listener {
     }
 
 
-
-
-
-
     private class CollectorTask extends BukkitRunnable {
         private final Block beaconBlock;
-        private final ItemManager itemManager;
 
-        public CollectorTask(Block beaconBlock, ItemManager itemManager) {
+        public CollectorTask(Block beaconBlock) {
             this.beaconBlock = beaconBlock;
-            this.itemManager = itemManager;
         }
 
         @Override
@@ -870,19 +1022,27 @@ public class ChunkCollector extends JavaPlugin implements Listener {
                 if (entity instanceof Item) {
                     Item item = (Item) entity;
                     ItemStack itemStack = item.getItemStack();
-                    Material itemType = itemStack.getType();
 
-                    if (collectableItems.contains(itemType)) {
-                        int itemAmount = itemStack.getAmount();
-
-                        StackedItem stackedItem = itemManager.getStackedItem(item);
-                        if (stackedItem != null) {
-                            itemAmount = (int) stackedItem.getSize();
+                    if (collectableItems.contains(itemStack.getType())) {
+                        List<ItemStack> storedItems = itemStorage.get(beaconBlock);
+                        if (storedItems == null) {
+                            storedItems = new ArrayList<>();
+                            itemStorage.put(beaconBlock, storedItems);
                         }
 
-                        Map<Material, Integer> storedItems = itemStorage.get(beaconBlock);
-                        int currentAmount = storedItems.getOrDefault(itemType, 0);
-                        storedItems.put(itemType, currentAmount + itemAmount);
+                        // Merge items with the same type, name, and lore
+                        boolean merged = false;
+                        for (ItemStack storedItem : storedItems) {
+                            if (storedItem.isSimilar(itemStack)) {
+                                storedItem.setAmount(storedItem.getAmount() + itemStack.getAmount());
+                                merged = true;
+                                break;
+                            }
+                        }
+
+                        if (!merged) {
+                            storedItems.add(itemStack);
+                        }
 
                         item.remove();
                     }
@@ -891,6 +1051,8 @@ public class ChunkCollector extends JavaPlugin implements Listener {
             updateCollectorHologram(beaconBlock);
         }
     }
+
+
 
 
     private void loadButtonConfig() {
