@@ -89,7 +89,6 @@ public class SQLite {
             if (generatedKeys.next()) {
                 int collectorId = generatedKeys.getInt(1);
 
-                // Combine items with the same material, name, and lore
                 Map<String, ItemStack> combinedItems = new HashMap<>();
                 for (ItemStack itemStack : storedItems) {
                     Material material = itemStack.getType();
@@ -106,7 +105,6 @@ public class SQLite {
                     }
                 }
 
-                // Save combined items
                 for (ItemStack itemStack : combinedItems.values()) {
                     Material material = itemStack.getType();
                     int amount = itemStack.getAmount();
@@ -206,7 +204,6 @@ public class SQLite {
                     }
                     itemStack.setItemMeta(meta);
 
-                    // Combine items with the same type, name, and lore
                     boolean itemExists = false;
                     for (ItemStack storedItem : items) {
                         if (storedItem.isSimilar(itemStack)) {
