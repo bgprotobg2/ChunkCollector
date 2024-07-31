@@ -4,6 +4,7 @@ main: bgprotobg.net.chunkcollector.ChunkCollector
 api-version: '1.20'
 softdepend:
   - AxBoosters
+  - ShopGUIPlus
 commands:
   chunkcollector:
     description: Gives a chunk collector to a player.
