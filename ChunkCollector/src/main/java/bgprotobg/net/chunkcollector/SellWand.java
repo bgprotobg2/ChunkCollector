@@ -117,7 +117,7 @@ public class SellWand implements CommandExecutor, Listener {
             meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "multiplier"), PersistentDataType.DOUBLE, multiplier);
             meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "uses"), PersistentDataType.INTEGER, uses);
             meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "rarity"), PersistentDataType.STRING, rarity);
-            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "earnings"), PersistentDataType.DOUBLE, 0.0);  // Initial earnings set to 0
+            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "earnings"), PersistentDataType.DOUBLE, 0.0);
             sellWand.setItemMeta(meta);
         }
         return sellWand;
