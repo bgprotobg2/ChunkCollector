@@ -64,7 +64,6 @@ public class ChunkCollector extends JavaPlugin implements Listener {
     private boolean isSuperiorSkyblockLoaded;
     private boolean isResidenceLoaded;
     private final Map<Block, Player> collectorOpeners = new HashMap<>();
-    // Assuming itemStorage is defined somewhere as follows
     private Map<Block, List<ItemStack>> itemStorage = new HashMap<>();
     private Map<String, CustomItem> customItems = new HashMap<>();
     private boolean isShopGUIPlusLoaded;
@@ -189,7 +188,7 @@ public class ChunkCollector extends JavaPlugin implements Listener {
         bookItemName = ChatColor.translateAlternateColorCodes('&', getConfig().getString("collector.book.name", "&aLatest 5 Sellers"));
 
         bookItemLore = new ArrayList<>();
-        for (String line : getConfig().getStringList("collector.book.item-lore")) {  // Adjust the key here
+        for (String line : getConfig().getStringList("collector.book.item-lore")) {  
             bookItemLore.add(ChatColor.translateAlternateColorCodes('&', line));
         }
     }
@@ -316,7 +315,6 @@ public class ChunkCollector extends JavaPlugin implements Listener {
                 for (Iterator<ItemStack> iterator = drops.iterator(); iterator.hasNext(); ) {
                     ItemStack itemStack = iterator.next();
                     if (collectableItems.contains(itemStack.getType())) {
-                        // Combine items with the same type, name, and lore
                         boolean itemExists = false;
                         for (ItemStack storedItem : storedItems) {
                             if (storedItem.getType() == itemStack.getType() &&
@@ -423,18 +421,18 @@ public class ChunkCollector extends JavaPlugin implements Listener {
             }
         }
         if (ownerName == null) {
-            ownerName = "Unknown"; // Default value if owner name is null
+            ownerName = "Unknown";
         }
 
         int totalAmount = getTotalAmount(block);
         String formattedTotalAmount = formatAmount(totalAmount);
         if (formattedTotalAmount == null) {
-            formattedTotalAmount = "0"; // Default value if formattedTotalAmount is null
+            formattedTotalAmount = "0";
         }
 
         String totalSoldAmount = getTotalSoldAmount(block);
         if (totalSoldAmount == null) {
-            totalSoldAmount = "0"; // Default value if totalSoldAmount is null
+            totalSoldAmount = "0";
         }
 
         List<String> hologramLines = getConfig().getStringList("hologram.lines");
@@ -660,7 +658,6 @@ public class ChunkCollector extends JavaPlugin implements Listener {
 
             updateCollectorHologram(block);
 
-            // Update SellWand earnings
             double currentEarnings = sellWand.getEarnings(sellwand);
             sellWand.setEarnings(sellwand, currentEarnings + finalValue);
 
@@ -760,7 +757,7 @@ public class ChunkCollector extends JavaPlugin implements Listener {
         }
     }
     protected String formatAmount(int amount) {
-        long longAmount = amount & 0xFFFFFFFFL; // Convert int to unsigned long equivalent
+        long longAmount = amount & 0xFFFFFFFFL;
         if (longAmount >= 1_000_000_000_000_000_000L) {
             return String.format("%.1fQ", longAmount / 1_000_000_000_000_000_000.0);
         } else if (longAmount >= 1_000_000_000_000_000L) {
@@ -1030,7 +1027,6 @@ public class ChunkCollector extends JavaPlugin implements Listener {
                             itemStorage.put(beaconBlock, storedItems);
                         }
 
-                        // Merge items with the same type, name, and lore
                         boolean merged = false;
                         for (ItemStack storedItem : storedItems) {
                             if (storedItem.isSimilar(itemStack)) {
