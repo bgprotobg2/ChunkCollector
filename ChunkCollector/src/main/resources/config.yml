@@ -1,4 +1,5 @@
 gui:
+  amount-text: "&aAmount:"
   book-enabled: true
   pickup-slot: 26
   sellall-slot: 24
@@ -15,7 +16,7 @@ hologram:
     - "&b{owner}'s Collector"
     - "&6&nRight click to open"
     - "&aItems: &e{items}"
-    - "&aTotal Sold: &e{total_sold}"
+    - "&aTotal Sold: &e${total_sold}"
 
 buttons:
   pickup:
@@ -35,18 +36,21 @@ sellwand:
     lore:
       - "&7Multiplier: &f%multiplier%"
       - "&7Uses: &f%uses%"
+      - "&7Earnings: &f$%earnings%"
     custom_model_data: 1001
   rare:
     name: "&bRare Sell Wand"
     lore:
       - "&bMultiplier: &f%multiplier%"
       - "&bUses: &f%uses%"
+      - "&bEarnings: &f$%earnings%"
     custom_model_data: 1002
   legendary:
     name: "&6Legendary Sell Wand"
     lore:
       - "&6Multiplier: &f%multiplier%"
       - "&6Uses: &f%uses%"
+      - "&6Earnings: &f$%earnings%"
     custom_model_data: 1003
 
 messages:
@@ -64,8 +68,25 @@ collector:
     name: "&6Chunk Collector"
     lore:
       - "&7Place this beacon to collect items"
-      - "&7store.pvpcloud."
+      - "&7Right click to place"
   book:
     name: "&aLatest 5 Sellers"
     item-lore:
       - "{player} - ${price} ({date})"
+
+custom-items:
+  sugar_cane:
+    name: "&aEnchanted SugarCane"
+    lore:
+      - ""
+      - " &2&l| aObtained by farming sugarcane"
+      - ""
+      - "&f&o(( Type /sell all to sell this item. ))"
+    enchanted: false
+    price: 100.0
+  love:
+    name: "&d&lLOVE YOU"
+    lore:
+      - "&7CLICK TO GAIN LOVE"
+    enchanted: false
+    price: 50.0
