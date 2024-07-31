@@ -1,243 +1,239 @@
 package bgprotobg.net.chunkcollector;
 
 import org.bukkit.Bukkit;
-import org.bukkit.Location;
+import org.bukkit.ChatColor;
 import org.bukkit.Material;
-import org.bukkit.block.Block;
+import org.bukkit.NamespacedKey;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandExecutor;
+import org.bukkit.command.CommandSender;
+import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.enchantments.Enchantment;
+import org.bukkit.entity.Player;
+import org.bukkit.event.Listener;
+import org.bukkit.inventory.ItemFlag;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataType;
+import org.bukkit.plugin.java.JavaPlugin;
 
-import java.sql.*;
-import java.util.*;
-import java.util.Date;
-import java.util.stream.Collectors;
+import java.util.ArrayList;
+import java.util.List;
 
-public class SQLite {
+public class SellWand implements CommandExecutor, Listener {
 
-    private final String dbPath;
+    private final JavaPlugin plugin;
 
-    public SQLite(String dbPath) {
-        this.dbPath = dbPath;
-        createTables();
+    public SellWand(JavaPlugin plugin) {
+        this.plugin = plugin;
+        plugin.saveDefaultConfig();
     }
 
-    private Connection getConnection() throws SQLException {
-        return DriverManager.getConnection("jdbc:sqlite:" + dbPath);
-    }
+    @Override
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        FileConfiguration config = plugin.getConfig();
 
-    public void createTables() {
-        try (Connection connection = getConnection();
-             Statement statement = connection.createStatement()) {
-            statement.executeUpdate("CREATE TABLE IF NOT EXISTS collectors (" +
-                    "id INTEGER PRIMARY KEY AUTOINCREMENT," +
-                    "blockX INTEGER," +
-                    "blockY INTEGER," +
-                    "blockZ INTEGER," +
-                    "world TEXT," +
-                    "ownerUUID TEXT," +
-                    "hologramX DOUBLE," +
-                    "hologramY DOUBLE," +
-                    "hologramZ DOUBLE," +
-                    "sold TEXT DEFAULT 0," +
-                    "sellers TEXT" +
-                    ")");
-            statement.executeUpdate("CREATE TABLE IF NOT EXISTS items (" +
-                    "collectorID INTEGER," +
-                    "material TEXT," +
-                    "amount INTEGER," +
-                    "PRIMARY KEY (collectorID, material)," +
-                    "FOREIGN KEY (collectorID) REFERENCES collectors (id)" +
-                    ")");
-        } catch (SQLException e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void saveCollector(Block block, UUID ownerUUID, Location hologramLocation, Map<Material, Integer> storedItems, String sold, List<ChunkCollector.SellerInfo> sellers) {
-        try (Connection connection = getConnection();
-             PreparedStatement insertCollector = connection.prepareStatement(
-                     "INSERT OR REPLACE INTO collectors (blockX, blockY, blockZ, world, ownerUUID, hologramX, hologramY, hologramZ, sold, sellers) " +
-                             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                     Statement.RETURN_GENERATED_KEYS);
-             PreparedStatement insertItem = connection.prepareStatement(
-                     "INSERT OR REPLACE INTO items (collectorID, material, amount) VALUES (?, ?, ?)")) {
-
-            connection.setAutoCommit(false);
-
-            insertCollector.setInt(1, block.getX());
-            insertCollector.setInt(2, block.getY());
-            insertCollector.setInt(3, block.getZ());
-            insertCollector.setString(4, block.getWorld().getName());
-            insertCollector.setString(5, ownerUUID.toString());
-            insertCollector.setDouble(6, hologramLocation.getX());
-            insertCollector.setDouble(7, hologramLocation.getY());
-            insertCollector.setDouble(8, hologramLocation.getZ());
-            insertCollector.setString(9, sold);
-
-            String sellersString = sellers.stream()
-                    .map(seller -> seller.getPlayerName() + ":" + formatPrice(seller.getTotalValueSold()) + ":" + seller.getLastSaleDate().getTime())
-                    .collect(Collectors.joining(","));
-            insertCollector.setString(10, sellersString);
-
-            insertCollector.executeUpdate();
-
-            ResultSet generatedKeys = insertCollector.getGeneratedKeys();
-            if (generatedKeys.next()) {
-                int collectorId = generatedKeys.getInt(1);
-
-                for (Map.Entry<Material, Integer> entry : storedItems.entrySet()) {
-                    insertItem.setInt(1, collectorId);
-                    insertItem.setString(2, entry.getKey().toString());
-                    insertItem.setInt(3, entry.getValue());
-                    insertItem.executeUpdate();
-                }
-            }
-
-            connection.commit();
-        } catch (SQLException e) {
-            e.printStackTrace();
-        }
-    }
-
-    public Map<Block, CollectorData> loadCollectors() {
-        Map<Block, CollectorData> collectors = new HashMap<>();
-        try (Connection connection = getConnection();
-             Statement statement = connection.createStatement();
-             ResultSet collectorResultSet = statement.executeQuery("SELECT * FROM collectors")) {
-
-            while (collectorResultSet.next()) {
-                int id = collectorResultSet.getInt("id");
-                int blockX = collectorResultSet.getInt("blockX");
-                int blockY = collectorResultSet.getInt("blockY");
-                int blockZ = collectorResultSet.getInt("blockZ");
-                String world = collectorResultSet.getString("world");
-                UUID ownerUUID = UUID.fromString(collectorResultSet.getString("ownerUUID"));
-                Location hologramLocation = new Location(Bukkit.getWorld(world),
-                        collectorResultSet.getDouble("hologramX"),
-                        collectorResultSet.getDouble("hologramY"),
-                        collectorResultSet.getDouble("hologramZ"));
-
-                String sold = collectorResultSet.getString("sold");
-                String sellersString = collectorResultSet.getString("sellers");
-
-                Block block = new Location(Bukkit.getWorld(world), blockX, blockY, blockZ).getBlock();
-                Map<Material, Integer> items = loadItems(id);
-
-                List<ChunkCollector.SellerInfo> sellers = new ArrayList<>();
-                if (sellersString != null && !sellersString.isEmpty()) {
-                    sellers = Arrays.stream(sellersString.split(","))
-                            .map(sellerData -> {
-                                String[] parts = sellerData.split(":");
-                                if (parts.length == 3) {
-                                    String playerName = parts[0];
-                                    double totalValueSold = parseSold(parts[1]);
-                                    Date lastSaleDate = new Date(Long.parseLong(parts[2]));
-                                    return new ChunkCollector.SellerInfo(playerName, totalValueSold, lastSaleDate);
-                                } else {
-                                    return null;
-                                }
-                            })
-                            .filter(Objects::nonNull)
-                            .collect(Collectors.toList());
+        if (command.getName().equalsIgnoreCase("sellwand")) {
+            if (args.length == 6 && args[0].equalsIgnoreCase("give")) {
+                if (!sender.hasPermission("sellwand.give")) {
+                    sender.sendMessage(ChatColor.translateAlternateColorCodes('&', config.getString("messages.no_permission")));
+                    return true;
                 }
 
-                collectors.put(block, new CollectorData(id, ownerUUID, hologramLocation, items, sold, sellers));
-            }
-        } catch (SQLException e) {
-            e.printStackTrace();
-        }
-        return collectors;
-    }
+                Player target = Bukkit.getPlayer(args[1]);
+                if (target != null) {
+                    String rarity = args[2].toLowerCase();
+                    int amount;
+                    double multiplier;
+                    int uses;
 
+                    try {
+                        amount = Integer.parseInt(args[3]);
+                        multiplier = Double.parseDouble(args[4]);
+                        if (args[5].equalsIgnoreCase("infinity")) {
+                            uses = -1;
+                        } else {
+                            uses = Integer.parseInt(args[5]);
+                        }
+                    } catch (NumberFormatException e) {
+                        sender.sendMessage(ChatColor.translateAlternateColorCodes('&', config.getString("messages.invalid_number_format")));
+                        return false;
+                    }
 
-    private Map<Material, Integer> loadItems(int collectorID) {
-        Map<Material, Integer> items = new HashMap<>();
-        try (Connection connection = getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "SELECT material, amount FROM items WHERE collectorID = ?")) {
-            statement.setInt(1, collectorID);
-            try (ResultSet resultSet = statement.executeQuery()) {
-                while (resultSet.next()) {
-                    Material material = Material.valueOf(resultSet.getString("material"));
-                    int amount = resultSet.getInt("amount");
-                    items.put(material, amount);
+                    if (!isValidRarity(rarity)) {
+                        sender.sendMessage(ChatColor.translateAlternateColorCodes('&', config.getString("messages.invalid_rarity")));
+                        return false;
+                    }
+
+                    ItemStack sellWand = createSellWand(rarity, multiplier, uses);
+                    for (int i = 0; i < amount; i++) {
+                        target.getInventory().addItem(sellWand);
+                    }
+                    String message = config.getString("messages.sellwand_given").replace("%player%", target.getName());
+                    sender.sendMessage(ChatColor.translateAlternateColorCodes('&', message));
+                    return true;
+                } else {
+                    sender.sendMessage(ChatColor.translateAlternateColorCodes('&', config.getString("messages.player_not_found")));
+                    return false;
                 }
             }
-        } catch (SQLException e) {
-            e.printStackTrace();
         }
-        return items;
+        return false;
     }
 
-    protected String formatPrice(double sold) {
-        if (sold >= 1_000_000_000_000_000_000.0) {
-            return String.format("%.1fQ", sold / 1_000_000_000_000_000_000.0);
-        } else if (sold >= 1_000_000_000_000_000.0) {
-            return String.format("%.1fq", sold / 1_000_000_000_000_000.0);
-        } else if (sold >= 1_000_000_000_000.0) {
-            return String.format("%.1fT", sold / 1_000_000_000_000.0);
-        } else if (sold >= 1_000_000_000.0) {
-            return String.format("%.1fB", sold / 1_000_000_000.0);
-        } else if (sold >= 1_000_000.0) {
-            return String.format("%.1fM", sold / 1_000_000.0);
+    private boolean isValidRarity(String rarity) {
+        return rarity.equals("common") || rarity.equals("rare") || rarity.equals("legendary");
+    }
+
+    public ItemStack createSellWand(String rarity, double multiplier, int uses) {
+        FileConfiguration config = plugin.getConfig();
+        String materialName = config.getString("sellwand.material", "STICK");
+        Material material = Material.getMaterial(materialName.toUpperCase());
+        if (material == null) {
+            material = Material.STICK;
+        }
+
+        ItemStack sellWand = new ItemStack(material);
+        ItemMeta meta = sellWand.getItemMeta();
+        if (meta != null) {
+            String displayName = ChatColor.translateAlternateColorCodes('&', config.getString("sellwand." + rarity + ".name"));
+            meta.setDisplayName(displayName);
+            meta.addEnchant(Enchantment.DURABILITY, 1, true);
+            meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+
+            int customModelData = config.getInt("sellwand." + rarity + ".custom_model_data", -1);
+            if (customModelData != -1) {
+                meta.setCustomModelData(customModelData);
+            }
+
+            List<String> lore = new ArrayList<>();
+            for (String line : config.getStringList("sellwand." + rarity + ".lore")) {
+                lore.add(ChatColor.translateAlternateColorCodes('&', line
+                        .replace("%multiplier%", String.valueOf(multiplier))
+                        .replace("%uses%", uses == -1 ? "Infinity Uses" : String.valueOf(uses))
+                        .replace("%earnings%", formatPrice(0))));
+            }
+            meta.setLore(lore);
+            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "multiplier"), PersistentDataType.DOUBLE, multiplier);
+            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "uses"), PersistentDataType.INTEGER, uses);
+            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "rarity"), PersistentDataType.STRING, rarity);
+            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "earnings"), PersistentDataType.DOUBLE, 0.0);  // Initial earnings set to 0
+            sellWand.setItemMeta(meta);
+        }
+        return sellWand;
+    }
+
+    public double getMultiplier(ItemStack item) {
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            return meta.getPersistentDataContainer().getOrDefault(new NamespacedKey(plugin, "multiplier"), PersistentDataType.DOUBLE, 1.0);
+        }
+        return 1.0;
+    }
+
+    public int getUses(ItemStack item) {
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            Integer uses = meta.getPersistentDataContainer().get(new NamespacedKey(plugin, "uses"), PersistentDataType.INTEGER);
+            if (uses != null) {
+                return uses;
+            }
+        }
+        return 0;
+    }
+
+    private String formatPrice(double price) {
+        if (price >= 1_000_000_000_000_000_000.0) {
+            return String.format("%.1fQ", price / 1_000_000_000_000_000_000.0);
+        } else if (price >= 1_000_000_000_000_000.0) {
+            return String.format("%.1fq", price / 1_000_000_000_000_000.0);
+        } else if (price >= 1_000_000_000_000.0) {
+            return String.format("%.1fT", price / 1_000_000_000_000.0);
+        } else if (price >= 1_000_000_000.0) {
+            return String.format("%.1fB", price / 1_000_000_000.0);
+        } else if (price >= 1_000_000.0) {
+            return String.format("%.1fM", price / 1_000_000.0);
         } else {
-            return String.format("%.2f", sold);
+            return String.format("%.2f", price);
         }
     }
 
-    protected double parseSold(String sold) {
-        if (sold.endsWith("Q")) {
-            return Double.parseDouble(sold.replace("Q", "")) * 1_000_000_000_000_000_000.0;
-        } else if (sold.endsWith("q")) {
-            return Double.parseDouble(sold.replace("q", "")) * 1_000_000_000_000_000.0;
-        } else if (sold.endsWith("T")) {
-            return Double.parseDouble(sold.replace("T", "")) * 1_000_000_000_000.0;
-        } else if (sold.endsWith("B")) {
-            return Double.parseDouble(sold.replace("B", "")) * 1_000_000_000.0;
-        } else if (sold.endsWith("M")) {
-            return Double.parseDouble(sold.replace("M", "")) * 1_000_000.0;
-        } else {
-            return Double.parseDouble(sold);
+
+    public double getEarnings(ItemStack item) {
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            Double earnings = meta.getPersistentDataContainer().get(new NamespacedKey(plugin, "earnings"), PersistentDataType.DOUBLE);
+            if (earnings != null) {
+                return earnings;
+            }
+        }
+        return 0.0;
+    }
+
+    public void setEarnings(ItemStack item, double earnings) {
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "earnings"), PersistentDataType.DOUBLE, earnings);
+            List<String> lore = meta.getLore();
+            if (lore != null) {
+                String rarity = meta.getPersistentDataContainer().get(new NamespacedKey(plugin, "rarity"), PersistentDataType.STRING);
+                if (rarity != null) {
+                    List<String> configLore = plugin.getConfig().getStringList("sellwand." + rarity + ".lore");
+                    lore.clear();
+                    for (String line : configLore) {
+                        lore.add(ChatColor.translateAlternateColorCodes('&', line
+                                .replace("%multiplier%", String.valueOf(getMultiplier(item)))
+                                .replace("%uses%", getUses(item) == -1 ? "Infinity Uses" : String.valueOf(getUses(item)))
+                                .replace("%earnings%", formatPrice(earnings))));
+                    }
+                    meta.setLore(lore);
+                }
+            }
+            item.setItemMeta(meta);
         }
     }
 
-    public static class CollectorData {
-        private final int id;
-        private final UUID owner;
-        private final Location hologramLocation;
-        private final Map<Material, Integer> items;
-        private final String sold;
-        private final List<ChunkCollector.SellerInfo> sellers;
-
-        public CollectorData(int id, UUID owner, Location hologramLocation, Map<Material, Integer> items, String sold, List<ChunkCollector.SellerInfo> sellers) {
-            this.id = id;
-            this.owner = owner;
-            this.hologramLocation = hologramLocation;
-            this.items = items;
-            this.sold = sold;
-            this.sellers = sellers;
+    public void decrementUses(ItemStack item) {
+        int uses = getUses(item);
+        if (uses == -1) {
+            return;
         }
+        setUses(item, uses - 1);
+    }
 
-        public int getId() {
-            return id;
+    public void setUses(ItemStack item, int uses) {
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "uses"), PersistentDataType.INTEGER, uses);
+            List<String> lore = meta.getLore();
+            if (lore != null) {
+                String rarity = meta.getPersistentDataContainer().get(new NamespacedKey(plugin, "rarity"), PersistentDataType.STRING);
+                if (rarity != null) {
+                    List<String> configLore = plugin.getConfig().getStringList("sellwand." + rarity + ".lore");
+                    lore.clear();
+                    for (String line : configLore) {
+                        lore.add(ChatColor.translateAlternateColorCodes('&', line
+                                .replace("%multiplier%", String.valueOf(getMultiplier(item)))
+                                .replace("%uses%", uses == -1 ? "Infinity Uses" : String.valueOf(uses))
+                                .replace("%earnings%", formatPrice(getEarnings(item)))));
+                    }
+                    meta.setLore(lore);
+                }
+            }
+            item.setItemMeta(meta);
         }
+    }
 
-        public UUID getOwner() {
-            return owner;
+    public boolean isSellWand(ItemStack item) {
+        if (item == null) {
+            return false;
         }
-
-        public Location getHologramLocation() {
-            return hologramLocation;
+        Material material = item.getType();
+        String materialName = plugin.getConfig().getString("sellwand.material", "STICK").toUpperCase();
+        if (material != Material.getMaterial(materialName)) {
+            return false;
         }
-
-        public Map<Material, Integer> getItems() {
-            return items;
-        }
-
-        public String getSold() {
-            return sold;
-        }
-
-        public List<ChunkCollector.SellerInfo> getSellers() {
-            return sellers;
-        }
+        ItemMeta meta = item.getItemMeta();
+        return meta != null && meta.getPersistentDataContainer().has(new NamespacedKey(plugin, "multiplier"), PersistentDataType.DOUBLE);
     }
 }
