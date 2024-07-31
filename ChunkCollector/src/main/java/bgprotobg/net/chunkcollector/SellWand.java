@@ -110,12 +110,14 @@ public class SellWand implements CommandExecutor, Listener {
             for (String line : config.getStringList("sellwand." + rarity + ".lore")) {
                 lore.add(ChatColor.translateAlternateColorCodes('&', line
                         .replace("%multiplier%", String.valueOf(multiplier))
-                        .replace("%uses%", uses == -1 ? "Infinity Uses" : String.valueOf(uses))));
+                        .replace("%uses%", uses == -1 ? "Infinity Uses" : String.valueOf(uses))
+                        .replace("%earnings%", formatPrice(0))));
             }
             meta.setLore(lore);
             meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "multiplier"), PersistentDataType.DOUBLE, multiplier);
             meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "uses"), PersistentDataType.INTEGER, uses);
             meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "rarity"), PersistentDataType.STRING, rarity);
+            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "earnings"), PersistentDataType.DOUBLE, 0.0);  // Initial earnings set to 0
             sellWand.setItemMeta(meta);
         }
         return sellWand;
@@ -140,6 +142,57 @@ public class SellWand implements CommandExecutor, Listener {
         return 0;
     }
 
+    private String formatPrice(double price) {
+        if (price >= 1_000_000_000_000_000_000.0) {
+            return String.format("%.1fQ", price / 1_000_000_000_000_000_000.0);
+        } else if (price >= 1_000_000_000_000_000.0) {
+            return String.format("%.1fq", price / 1_000_000_000_000_000.0);
+        } else if (price >= 1_000_000_000_000.0) {
+            return String.format("%.1fT", price / 1_000_000_000_000.0);
+        } else if (price >= 1_000_000_000.0) {
+            return String.format("%.1fB", price / 1_000_000_000.0);
+        } else if (price >= 1_000_000.0) {
+            return String.format("%.1fM", price / 1_000_000.0);
+        } else {
+            return String.format("%.2f", price);
+        }
+    }
+
+
+    public double getEarnings(ItemStack item) {
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            Double earnings = meta.getPersistentDataContainer().get(new NamespacedKey(plugin, "earnings"), PersistentDataType.DOUBLE);
+            if (earnings != null) {
+                return earnings;
+            }
+        }
+        return 0.0;
+    }
+
+    public void setEarnings(ItemStack item, double earnings) {
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "earnings"), PersistentDataType.DOUBLE, earnings);
+            List<String> lore = meta.getLore();
+            if (lore != null) {
+                String rarity = meta.getPersistentDataContainer().get(new NamespacedKey(plugin, "rarity"), PersistentDataType.STRING);
+                if (rarity != null) {
+                    List<String> configLore = plugin.getConfig().getStringList("sellwand." + rarity + ".lore");
+                    lore.clear();
+                    for (String line : configLore) {
+                        lore.add(ChatColor.translateAlternateColorCodes('&', line
+                                .replace("%multiplier%", String.valueOf(getMultiplier(item)))
+                                .replace("%uses%", getUses(item) == -1 ? "Infinity Uses" : String.valueOf(getUses(item)))
+                                .replace("%earnings%", formatPrice(earnings))));
+                    }
+                    meta.setLore(lore);
+                }
+            }
+            item.setItemMeta(meta);
+        }
+    }
+
     public void decrementUses(ItemStack item) {
         int uses = getUses(item);
         if (uses == -1) {
@@ -161,7 +214,8 @@ public class SellWand implements CommandExecutor, Listener {
                     for (String line : configLore) {
                         lore.add(ChatColor.translateAlternateColorCodes('&', line
                                 .replace("%multiplier%", String.valueOf(getMultiplier(item)))
-                                .replace("%uses%", uses == -1 ? "Infinity Uses" : String.valueOf(uses))));
+                                .replace("%uses%", uses == -1 ? "Infinity Uses" : String.valueOf(uses))
+                                .replace("%earnings%", formatPrice(getEarnings(item)))));
                     }
                     meta.setLore(lore);
                 }
